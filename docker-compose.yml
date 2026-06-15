@@ -1,0 +1,28 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      GLICUIDADO_DB_PATH: /data/glicuidado.db
+    volumes:
+      # Persiste o banco SQLite (dados dos usuários) entre deploys/reinícios.
+      - glicuidado_data:/data
+    restart: unless-stopped
+    networks:
+      easypanel:
+        aliases:
+          - glicuidado_app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  easypanel:
+    external: true
+
+volumes:
+  glicuidado_data:

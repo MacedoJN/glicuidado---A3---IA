@@ -1,13 +1,22 @@
 import sqlite3
 import os
+import secrets
 
 # Caminho absoluto para o banco, baseado na localização deste arquivo.
 # Garante que funcione independente de onde o Streamlit for executado.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "database", "glicuidado.db")
+
+# Em produção (Docker/EasyPanel) o caminho aponta para um volume persistente
+# via a variável de ambiente GLICUIDADO_DB_PATH; localmente usa a pasta database/.
+DB_PATH = os.environ.get(
+    "GLICUIDADO_DB_PATH",
+    os.path.join(BASE_DIR, "database", "glicuidado.db"),
+)
 
 
 def conectar():
+    # Garante que o diretório do banco exista (importante para volumes montados).
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     return sqlite3.connect(DB_PATH)
 
 
@@ -78,6 +87,21 @@ def criar_tabela():
         refeicao TEXT,
 
         data_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+
+    )
+    """)
+
+    # Tabela de sessões persistentes (mantém o login após F5 / reload)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sessoes(
+
+        token TEXT PRIMARY KEY,
+
+        usuario_id INTEGER NOT NULL,
+
+        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
         FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
 
@@ -306,6 +330,71 @@ def obter_usuario_por_email(email):
         "email": row[2],
         "senha_hash": row[3]
     }
+
+
+# --------------------------------------------------------------------------
+# SESSÕES PERSISTENTES (login sobrevive ao F5 / reload do navegador)
+# --------------------------------------------------------------------------
+
+def criar_sessao(usuario_id):
+    """Cria uma sessão persistente e retorna o token (a ser guardado na URL)."""
+
+    token = secrets.token_urlsafe(32)
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "INSERT INTO sessoes(token, usuario_id) VALUES(?, ?)",
+        (token, usuario_id),
+    )
+
+    conn.commit()
+    conn.close()
+
+    return token
+
+
+def obter_usuario_por_token(token, validade_dias=7):
+    """Retorna o usuário de uma sessão válida (não expirada), ou None."""
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT u.id, u.nome_exibicao, u.email
+        FROM sessoes s
+        JOIN usuarios u ON u.id = s.usuario_id
+        WHERE s.token = ?
+          AND s.criado_em >= datetime('now', ?)
+        """,
+        (token, f"-{validade_dias} days"),
+    )
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "nome_exibicao": row[1],
+        "email": row[2],
+    }
+
+
+def remover_sessao(token):
+    """Remove a sessão (logout)."""
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM sessoes WHERE token = ?", (token,))
+
+    conn.commit()
+    conn.close()
 
 
 def atualizar_email_usuario(usuario_id, novo_email):

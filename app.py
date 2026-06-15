@@ -8,12 +8,15 @@ from database.db import (
     obter_paciente,
     salvar_paciente,
     obter_ultimo_registro,
-    inserir_medicao
+    inserir_medicao,
+    obter_usuario_por_token,
+    remover_sessao
 )
-from models.previsao import prever
+from models.previsao import prever_risco, carregar_metricas
 from utils.estilo import aplicar_tema
 from utils.autenticacao import exibir_autenticacao
 from utils.perfil import render_perfil
+from utils.sessao import obter_param, limpar_params
 
 criar_tabela()
 
@@ -27,6 +30,17 @@ aplicar_tema()
 # --------------------------------------------------------------------------
 # AUTENTICAÇÃO
 # --------------------------------------------------------------------------
+# Restaura a sessão persistente a partir do token na URL (sobrevive ao F5).
+if "usuario_logado" not in st.session_state:
+    token = obter_param("sid")
+    if token:
+        usuario_restaurado = obter_usuario_por_token(token)
+        if usuario_restaurado:
+            st.session_state["usuario_logado"] = usuario_restaurado
+        else:
+            # Token inválido ou expirado: limpa a URL.
+            limpar_params()
+
 if "usuario_logado" not in st.session_state:
     exibir_autenticacao()
     st.stop()
@@ -103,27 +117,32 @@ with st.sidebar:
             'font-size:1.5rem;">👤</div>'
         )
 
-    st.markdown(avatar_html, unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="gc-avatar-wrapper">{avatar_html}</div>',
+        unsafe_allow_html=True
+    )
 
-    if st.button("Editar Perfil", key="btn_abrir_perfil"):
+    if st.button("Editar Perfil", key="btn_abrir_perfil", use_container_width=True):
         st.session_state["mostrar_perfil"] = True
         st.rerun()
 
     st.markdown(f'<div class="gc-welcome-text">Bem Vindo, {primeiro_nome}</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="gc-menu-section">Paciente</div>', unsafe_allow_html=True)
-
-    opcoes_paciente = ["Histórico"]
-
     st.markdown('<div class="gc-menu-section">Saúde</div>', unsafe_allow_html=True)
 
-    opcoes_saude = ["Cadastrar Medição", "Predição IA", "Dashboard", "Gerar Relatório"]
+    todas_opcoes = ["Cadastrar Medição", "Predição IA", "Dashboard", "Gerar Relatório"]
 
-    todas_opcoes = opcoes_paciente + opcoes_saude
+    icones_menu = {
+        "Cadastrar Medição": "🩸",
+        "Predição IA": "🤖",
+        "Dashboard": "📊",
+        "Gerar Relatório": "📥",
+    }
 
     menu = st.radio(
         "Menu",
         todas_opcoes,
+        format_func=lambda opcao: f"{icones_menu.get(opcao, '')}  {opcao}",
         label_visibility="collapsed"
     )
 
@@ -131,6 +150,10 @@ with st.sidebar:
     st.markdown('<div class="gc-sidebar-spacer"></div>', unsafe_allow_html=True)
 
     if st.button("Sair", use_container_width=True, key="btn_sair"):
+        token = obter_param("sid")
+        if token:
+            remover_sessao(token)
+        limpar_params()
         del st.session_state["usuario_logado"]
         st.session_state.pop("mostrar_perfil", None)
         st.rerun()
@@ -249,77 +272,122 @@ if menu == "Cadastrar Medição":
         st.success("Registro salvo com sucesso.")
 
 # --------------------------------------------------------------------------
-# PREDIÇÃO IA
+# PREDIÇÃO IA — Risco de Diabetes
 # --------------------------------------------------------------------------
 elif menu == "Predição IA":
 
-    st.header("Predição de Hiperglicemia")
+    st.header("Predição de Risco de Diabetes")
+    st.caption(f"Paciente: **{paciente['nome']}**")
 
-    ultimo = obter_ultimo_registro(usuario["id"])
+    metricas = carregar_metricas()
 
-    if ultimo is None:
+    if metricas is None:
         st.warning(
-            "Nenhuma medição encontrada. "
-            "Cadastre uma medição na aba 'Cadastrar Medição' antes de usar a Predição IA."
+            "Modelo ainda não treinado. Execute `python models/treino_modelo.py` "
+            "para gerar o modelo antes de usar a Predição IA."
         )
 
     else:
-        st.caption(f"Paciente: **{paciente['nome']}**")
-
-        st.metric("Última glicemia registrada (mg/dL)", f"{ultimo['glicemia']:.0f}")
-        st.caption(f"Registrado em: {ultimo['data_registro']}")
-
-        medicacao = st.selectbox(
-            "Tomou medicação?",
-            ["Sim", "Não"]
+        st.info(
+            f"Modelo em uso: **{metricas['melhor_modelo']}**  ·  "
+            f"ROC-AUC (teste): **{metricas['teste']['roc_auc']:.2f}**  ·  "
+            f"Recall: **{metricas['teste']['recall_positivo']:.2f}**"
         )
 
-        atividade = st.selectbox(
-            "Praticou atividade física?",
-            ["Sim", "Não"]
-        )
+        # Pré-preenche a glicemia com a última medição do paciente, se houver,
+        # limitando a uma faixa clinicamente plausível (40–400 mg/dL).
+        ultimo = obter_ultimo_registro(usuario["id"])
+        glicemia_default = int(ultimo["glicemia"]) if ultimo else 120
+        glicemia_default = max(40, min(400, glicemia_default))
 
-        if st.button("Analisar"):
+        st.markdown("Preencha os dados clínicos para estimar o risco de diabetes:")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            glicemia = st.number_input(
+                "Glicemia (mg/dL)", min_value=40, max_value=400, value=glicemia_default
+            )
+            imc = st.number_input(
+                "IMC (kg/m²)", min_value=0.0, max_value=70.0, value=28.0, step=0.1
+            )
+            idade = st.number_input("Idade", min_value=1, max_value=120, value=35)
+            pressao_arterial = st.number_input(
+                "Pressão arterial diastólica (mmHg)", min_value=0, max_value=200, value=72
+            )
+
+        with col2:
+            gestacoes = st.number_input(
+                "Nº de gestações", min_value=0, max_value=20, value=0
+            )
+            insulina = st.number_input(
+                "Insulina sérica (mu U/ml)", min_value=0, max_value=900, value=0
+            )
+            dobra_cutanea = st.number_input(
+                "Dobra cutânea do tríceps (mm)", min_value=0, max_value=100, value=20
+            )
+            hist_familiar = st.number_input(
+                "Histórico familiar (função pedigree)",
+                min_value=0.0,
+                max_value=3.0,
+                value=0.5,
+                step=0.01,
+            )
+
+        if st.button("Analisar Risco"):
 
             try:
-                resultado = prever(
-                    ultimo["glicemia"],
-                    1 if medicacao == "Sim" else 0,
-                    1 if atividade == "Sim" else 0
+                resultado = prever_risco(
+                    {
+                        "gestacoes": gestacoes,
+                        "glicemia": glicemia,
+                        "pressao_arterial": pressao_arterial,
+                        "dobra_cutanea": dobra_cutanea,
+                        "insulina": insulina,
+                        "imc": imc,
+                        "hist_familiar": hist_familiar,
+                        "idade": idade,
+                    }
                 )
 
-                if resultado == 1:
-                    st.error("⚠️ Risco de Hiperglicemia")
+                prob = resultado["probabilidade"]
+
+                # Evita exibir "0%"/"100%", que passam falsa certeza absoluta.
+                if prob < 0.01:
+                    prob_txt = "<1%"
+                elif prob > 0.99:
+                    prob_txt = ">99%"
                 else:
-                    st.success("✅ Glicemia Controlada")
+                    prob_txt = f"{prob:.0%}"
+
+                if resultado["classe"] == 1:
+                    st.error(f"⚠️ Risco de Diabetes — probabilidade estimada: {prob_txt}")
+                else:
+                    st.success(f"✅ Baixo risco — probabilidade estimada: {prob_txt}")
+
+                st.progress(prob)
+
+                # Explicabilidade: fatores globais mais influentes no modelo.
+                importancias = metricas.get("importancia_features", {})
+                if importancias:
+                    top = sorted(
+                        importancias.items(), key=lambda kv: kv[1], reverse=True
+                    )[:3]
+                    st.caption(
+                        "Fatores que mais pesam na decisão do modelo: "
+                        + ", ".join(f"**{nome}**" for nome, _ in top)
+                    )
+
+                st.caption(
+                    "⚕️ Esta estimativa é uma ferramenta de apoio e **não substitui** "
+                    "avaliação médica. Consulte um profissional de saúde."
+                )
 
             except FileNotFoundError as e:
                 st.error(str(e))
 
 # --------------------------------------------------------------------------
-# HISTÓRICO
-# --------------------------------------------------------------------------
-elif menu == "Histórico":
-
-    st.header("Histórico de Registros")
-
-    st.caption(f"Paciente: **{paciente['nome']}**")
-
-    conn = conectar()
-
-    df = pd.read_sql(
-        "SELECT glicemia, medicacao, medicacoes_utilizadas, atividade, jejum, refeicao, data_registro "
-        "FROM glicemia WHERE usuario_id = ? ORDER BY id DESC",
-        conn,
-        params=(usuario["id"],)
-    )
-
-    conn.close()
-
-    st.dataframe(df)
-
-# --------------------------------------------------------------------------
-# DASHBOARD
+# DASHBOARD (inclui o histórico de registros)
 # --------------------------------------------------------------------------
 elif menu == "Dashboard":
 

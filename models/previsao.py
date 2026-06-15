@@ -1,15 +1,39 @@
+"""
+Inferência de risco de diabetes em produção.
+
+Carrega o pipeline treinado (pré-processamento + melhor modelo) de forma lazy e
+expõe funções para prever a probabilidade de diabetes a partir das features
+clínicas. O mesmo pré-processamento do treino é aplicado automaticamente, pois
+está encapsulado no pipeline salvo.
+"""
+
+import json
 import os
+
 import joblib
 import pandas as pd
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "modelo_rf.pkl")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "modelo_diabetes.pkl")
+METRICS_PATH = os.path.join(BASE_DIR, "reports", "metrics.json")
+
+# Ordem das features esperada pelo pipeline.
+FEATURES = [
+    "gestacoes",
+    "glicemia",
+    "pressao_arterial",
+    "dobra_cutanea",
+    "insulina",
+    "imc",
+    "hist_familiar",
+    "idade",
+]
 
 _modelo = None
 
 
 def _carregar_modelo():
-    """Carrega o modelo apenas quando necessário (lazy loading)."""
+    """Carrega o pipeline apenas quando necessário (lazy loading)."""
     global _modelo
 
     if _modelo is None:
@@ -23,15 +47,33 @@ def _carregar_modelo():
     return _modelo
 
 
-def prever(glicemia, medicacao, atividade):
+def prever_risco(dados: dict):
+    """Prevê o risco de diabetes para um conjunto de features clínicas.
 
+    Args:
+        dados: dicionário com as chaves de ``FEATURES``.
+
+    Returns:
+        dict com ``classe`` (0/1), ``probabilidade`` (float 0-1) e
+        ``classe_texto``.
+    """
     modelo = _carregar_modelo()
 
-    entrada = pd.DataFrame(
-        [[glicemia, medicacao, atividade]],
-        columns=["glicemia", "medicacao", "atividade"]
-    )
+    entrada = pd.DataFrame([[dados[f] for f in FEATURES]], columns=FEATURES)
 
-    resultado = modelo.predict(entrada)
+    classe = int(modelo.predict(entrada)[0])
+    probabilidade = float(modelo.predict_proba(entrada)[0][1])
 
-    return resultado[0]
+    return {
+        "classe": classe,
+        "probabilidade": probabilidade,
+        "classe_texto": "Risco de diabetes" if classe == 1 else "Baixo risco",
+    }
+
+
+def carregar_metricas():
+    """Retorna as métricas salvas pelo treino (ou None se ainda não treinado)."""
+    if not os.path.exists(METRICS_PATH):
+        return None
+    with open(METRICS_PATH, encoding="utf-8") as f:
+        return json.load(f)

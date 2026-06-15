@@ -1,7 +1,12 @@
 import streamlit as st
 
-from database.db import criar_usuario, obter_usuario_por_email
+from database.db import (
+    criar_usuario,
+    obter_usuario_por_email,
+    criar_sessao,
+)
 from utils.auth import gerar_hash_senha, verificar_senha
+from utils.sessao import definir_param
 
 
 def _ir_para(tela):
@@ -10,8 +15,6 @@ def _ir_para(tela):
 
 
 def tela_login():
-
-    st.markdown('<div class="gc-auth-wrapper">', unsafe_allow_html=True)
 
     st.markdown('<div class="gc-auth-icon">👤</div>', unsafe_allow_html=True)
     st.markdown('<div class="gc-auth-title">Bem vindo ao Glicuidado</div>', unsafe_allow_html=True)
@@ -23,8 +26,6 @@ def tela_login():
     _, col_centro, _ = st.columns([1, 2, 1])
 
     with col_centro:
-
-        st.markdown('<div class="gc-auth-card">', unsafe_allow_html=True)
 
         st.markdown('<div class="gc-field-label">Email</div>', unsafe_allow_html=True)
         email = st.text_input(
@@ -58,9 +59,9 @@ def tela_login():
                         "email": usuario["email"],
                         "nome_exibicao": usuario["nome_exibicao"]
                     }
+                    # Cria sessão persistente e guarda o token na URL (sobrevive ao F5).
+                    definir_param("sid", criar_sessao(usuario["id"]))
                     st.rerun()
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
         col_a, col_b = st.columns(2)
 
@@ -80,12 +81,8 @@ def tela_login():
             unsafe_allow_html=True
         )
 
-    st.markdown('</div>', unsafe_allow_html=True)
-
 
 def tela_cadastro():
-
-    st.markdown('<div class="gc-auth-wrapper">', unsafe_allow_html=True)
 
     st.markdown('<div class="gc-auth-icon">🩺</div>', unsafe_allow_html=True)
     st.markdown('<div class="gc-auth-title">Criar Conta</div>', unsafe_allow_html=True)
@@ -97,8 +94,6 @@ def tela_cadastro():
     _, col_centro, _ = st.columns([1, 2, 1])
 
     with col_centro:
-
-        st.markdown('<div class="gc-auth-card">', unsafe_allow_html=True)
 
         st.markdown(
             '<div class="gc-field-label">Nome de exibição '
@@ -161,8 +156,6 @@ def tela_cadastro():
                     st.success("Conta criada com sucesso! Faça login para continuar.")
                     _ir_para("login")
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
         st.markdown(
             '<div class="gc-switch-text">Já tem uma conta?</div>',
             unsafe_allow_html=True
@@ -170,8 +163,6 @@ def tela_cadastro():
 
         if st.button("Entrar", use_container_width=True, key="btn_ir_login"):
             _ir_para("login")
-
-    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def exibir_autenticacao():

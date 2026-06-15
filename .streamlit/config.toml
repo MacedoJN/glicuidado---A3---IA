@@ -1,0 +1,12 @@
+[server]
+# Configurações para rodar em container atrás do proxy do EasyPanel.
+headless = true
+address = "0.0.0.0"
+port = 8501
+# O EasyPanel/Traefik termina o TLS e faz o proxy; estes ajustes evitam
+# problemas de conexão do WebSocket atrás do reverse proxy.
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false

@@ -28,7 +28,10 @@ def render_dashboard(usuario_id=None):
 
     if len(df) > 0:
 
-        st.dataframe(df)
+        st.subheader("Histórico de Registros")
+        # Oculta colunas internas (chaves) na visualização do histórico.
+        colunas_internas = [c for c in ["id", "usuario_id"] if c in df.columns]
+        st.dataframe(df.drop(columns=colunas_internas))
 
         st.subheader("Estatísticas Gerais")
 

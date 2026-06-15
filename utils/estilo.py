@@ -45,7 +45,7 @@ def aplicar_tema():
         align-items: center;
         justify-content: center;
         font-size: 2rem;
-        margin-bottom: 1.25rem;
+        margin: 0 auto 1.25rem auto;
         box-shadow: 0 8px 24px rgba(47, 111, 237, 0.35);
     }
 
@@ -150,6 +150,14 @@ def aplicar_tema():
     }
 
     /* Avatar do usuário na sidebar */
+    .gc-avatar-wrapper {
+        display: flex;
+        justify-content: center;
+        width: 100%;
+        margin-top: 0.5rem;
+        margin-bottom: 0.25rem;
+    }
+
     .gc-avatar-img {
         border-radius: 50%;
         object-fit: cover;
@@ -163,12 +171,31 @@ def aplicar_tema():
         font-weight: 600;
         font-size: 1rem;
         margin-top: 0.5rem;
+        text-align: center;
     }
 
-    /* Faz o conteúdo da sidebar ocupar a altura toda em coluna,
-       permitindo empurrar o botão "Sair" para o final via spacer flex-grow. */
-    section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
-        min-height: calc(100vh - 2rem);
+    /* Alinha o ícone e o texto de cada item do menu lateral */
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {
+        display: flex;
+        align-items: center;
+    }
+
+    section[data-testid="stSidebar"] div[role="radiogroup"] label p {
+        margin: 0;
+    }
+
+    /* Faz o conteúdo da sidebar ocupar a altura toda em coluna (flex real),
+       permitindo empurrar o botão "Sair" para o final via spacer. */
+    section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > div[data-testid="stVerticalBlock"] {
+        display: flex;
+        flex-direction: column;
+        min-height: calc(100vh - 5rem);
+    }
+
+    /* O spacer fica dentro de um container de elemento do Streamlit; é esse
+       container que precisa "crescer" para empurrar o botão Sair para baixo. */
+    section[data-testid="stSidebar"] [data-testid="stElementContainer"]:has(.gc-sidebar-spacer) {
+        flex-grow: 1;
     }
 
     .gc-sidebar-spacer {

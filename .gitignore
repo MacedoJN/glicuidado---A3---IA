@@ -1,0 +1,28 @@
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Banco de dados local (em produção fica no volume)
+database/glicuidado.db
+
+# Artefatos gerados pelo treino (recriados no build / execução)
+models/modelo_diabetes.pkl
+reports/
+
+# Notebooks: checkpoints
+.ipynb_checkpoints/
+
+# Sistema operacional / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Variáveis de ambiente locais
+.env

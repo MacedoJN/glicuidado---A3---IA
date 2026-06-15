@@ -1,0 +1,18 @@
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.git
+.gitignore
+
+# Banco local de desenvolvimento (não deve ir para a imagem; em produção fica no volume)
+database/glicuidado.db
+
+# Artefatos gerados no build (modelo/figuras são recriados pelo treino no Dockerfile)
+models/modelo_diabetes.pkl
+reports/
+
+# Material de desenvolvimento desnecessário em produção
+notebooks/
+*.pptx
