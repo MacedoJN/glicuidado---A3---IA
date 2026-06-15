@@ -20,6 +20,17 @@ def conectar():
     return sqlite3.connect(DB_PATH)
 
 
+def _adicionar_coluna_se_ausente(cursor, tabela, coluna, definicao):
+    """Adiciona uma coluna a uma tabela existente apenas se ela ainda não existir.
+
+    Mantém compatibilidade com bancos criados antes desta versão (a VPS já tem
+    dados), evitando perda de informação ao introduzir novos campos.
+    """
+    colunas = [row[1] for row in cursor.execute(f"PRAGMA table_info({tabela})").fetchall()]
+    if coluna not in colunas:
+        cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {definicao}")
+
+
 def criar_tabela():
 
     conn = conectar()
@@ -33,6 +44,10 @@ def criar_tabela():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
 
         nome_exibicao TEXT,
+
+        funcao TEXT,
+
+        tipo TEXT DEFAULT 'Paciente',
 
         email TEXT NOT NULL UNIQUE,
 
@@ -51,9 +66,19 @@ def criar_tabela():
 
         usuario_id INTEGER NOT NULL UNIQUE,
 
+        responsavel_id INTEGER,
+
         nome TEXT NOT NULL,
 
         data_nascimento TEXT,
+
+        genero TEXT,
+
+        peso REAL,
+
+        altura REAL,
+
+        status TEXT DEFAULT 'Ativo',
 
         numero_sus TEXT,
 
@@ -79,6 +104,10 @@ def criar_tabela():
         medicacao INTEGER NOT NULL,
 
         medicacoes_utilizadas TEXT,
+
+        medicacao_nome TEXT,
+
+        medicacao_dosagem TEXT,
 
         atividade INTEGER NOT NULL,
 
@@ -108,16 +137,21 @@ def criar_tabela():
     )
     """)
 
-    # Migração: adiciona colunas em bancos criados antes desta versão
-    colunas_existentes = [
-        row[1] for row in cursor.execute("PRAGMA table_info(glicemia)").fetchall()
-    ]
+    # Migração: adiciona colunas em bancos criados antes desta versão, sem
+    # apagar nada (a VPS já tem dados de usuários).
+    _adicionar_coluna_se_ausente(cursor, "usuarios", "funcao", "TEXT")
+    _adicionar_coluna_se_ausente(cursor, "usuarios", "tipo", "TEXT DEFAULT 'Paciente'")
 
-    if "jejum" not in colunas_existentes:
-        cursor.execute("ALTER TABLE glicemia ADD COLUMN jejum INTEGER NOT NULL DEFAULT 1")
+    _adicionar_coluna_se_ausente(cursor, "paciente", "responsavel_id", "INTEGER")
+    _adicionar_coluna_se_ausente(cursor, "paciente", "genero", "TEXT")
+    _adicionar_coluna_se_ausente(cursor, "paciente", "peso", "REAL")
+    _adicionar_coluna_se_ausente(cursor, "paciente", "altura", "REAL")
+    _adicionar_coluna_se_ausente(cursor, "paciente", "status", "TEXT DEFAULT 'Ativo'")
 
-    if "refeicao" not in colunas_existentes:
-        cursor.execute("ALTER TABLE glicemia ADD COLUMN refeicao TEXT")
+    _adicionar_coluna_se_ausente(cursor, "glicemia", "jejum", "INTEGER NOT NULL DEFAULT 1")
+    _adicionar_coluna_se_ausente(cursor, "glicemia", "refeicao", "TEXT")
+    _adicionar_coluna_se_ausente(cursor, "glicemia", "medicacao_nome", "TEXT")
+    _adicionar_coluna_se_ausente(cursor, "glicemia", "medicacao_dosagem", "TEXT")
 
     conn.commit()
     conn.close()
@@ -134,7 +168,8 @@ def obter_paciente(usuario_id):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT id, nome, data_nascimento, numero_sus, medicacoes, foto
+        SELECT id, nome, data_nascimento, genero, peso, altura, status,
+               numero_sus, medicacoes, foto, responsavel_id
         FROM paciente
         WHERE usuario_id = ?
     """, (usuario_id,))
@@ -149,16 +184,25 @@ def obter_paciente(usuario_id):
         "id": row[0],
         "nome": row[1],
         "data_nascimento": row[2] or "",
-        "numero_sus": row[3] or "",
-        "medicacoes": row[4] or "",
-        "foto": row[5]
+        "genero": row[3] or "",
+        "peso": row[4],
+        "altura": row[5],
+        "status": row[6] or "Ativo",
+        "numero_sus": row[7] or "",
+        "medicacoes": row[8] or "",
+        "foto": row[9],
+        "responsavel_id": row[10]
     }
 
 
-def salvar_paciente(usuario_id, nome, data_nascimento, numero_sus, medicacoes, foto=None):
+def salvar_paciente(usuario_id, nome, data_nascimento, numero_sus, medicacoes,
+                    genero=None, peso=None, altura=None, status="Ativo", foto=None,
+                    responsavel_id=None):
     """Insere ou atualiza o perfil do paciente vinculado ao usuário.
 
-    Se `foto` for None, a foto existente (se houver) é preservada.
+    Se `foto` for None, a foto existente (se houver) é preservada. O vínculo
+    `responsavel_id` (enfermeiro dono da ficha) é definido apenas na criação e
+    nunca sobrescrito por atualizações.
     """
 
     conn = conectar()
@@ -168,25 +212,65 @@ def salvar_paciente(usuario_id, nome, data_nascimento, numero_sus, medicacoes, f
 
     if existente is None:
         cursor.execute("""
-            INSERT INTO paciente(usuario_id, nome, data_nascimento, numero_sus, medicacoes, foto)
-            VALUES(?,?,?,?,?,?)
-        """, (usuario_id, nome, data_nascimento, numero_sus, medicacoes, foto))
+            INSERT INTO paciente(
+                usuario_id, responsavel_id, nome, data_nascimento, genero, peso,
+                altura, status, numero_sus, medicacoes, foto
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        """, (usuario_id, responsavel_id, nome, data_nascimento, genero, peso,
+              altura, status, numero_sus, medicacoes, foto))
     else:
         if foto is None:
             cursor.execute("""
                 UPDATE paciente
-                SET nome=?, data_nascimento=?, numero_sus=?, medicacoes=?
+                SET nome=?, data_nascimento=?, genero=?, peso=?, altura=?,
+                    status=?, numero_sus=?, medicacoes=?
                 WHERE usuario_id=?
-            """, (nome, data_nascimento, numero_sus, medicacoes, usuario_id))
+            """, (nome, data_nascimento, genero, peso, altura,
+                  status, numero_sus, medicacoes, usuario_id))
         else:
             cursor.execute("""
                 UPDATE paciente
-                SET nome=?, data_nascimento=?, numero_sus=?, medicacoes=?, foto=?
+                SET nome=?, data_nascimento=?, genero=?, peso=?, altura=?,
+                    status=?, numero_sus=?, medicacoes=?, foto=?
                 WHERE usuario_id=?
-            """, (nome, data_nascimento, numero_sus, medicacoes, foto, usuario_id))
+            """, (nome, data_nascimento, genero, peso, altura,
+                  status, numero_sus, medicacoes, foto, usuario_id))
 
     conn.commit()
     conn.close()
+
+
+def listar_pacientes_do_responsavel(responsavel_id):
+    """Lista as fichas de pacientes administradas por um profissional.
+
+    Retorna uma lista de dicts com o usuario_id (chave usada pelas medições),
+    nome, status e email de login de cada paciente vinculado ao responsável.
+    """
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT p.usuario_id, p.nome, p.status, u.email
+        FROM paciente p
+        JOIN usuarios u ON u.id = p.usuario_id
+        WHERE p.responsavel_id = ?
+        ORDER BY p.nome COLLATE NOCASE
+    """, (responsavel_id,))
+
+    linhas = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            "usuario_id": linha[0],
+            "nome": linha[1],
+            "status": linha[2] or "Ativo",
+            "email": linha[3],
+        }
+        for linha in linhas
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -222,8 +306,13 @@ def obter_ultimo_registro(usuario_id):
     }
 
 
-def inserir_medicao(usuario_id, glicemia, medicacao, medicacoes_utilizadas, atividade, jejum, refeicao, data_registro=None):
-    """Insere uma nova medição. Se `data_registro` for None, usa o momento atual."""
+def inserir_medicao(usuario_id, glicemia, medicacao, medicacao_nome, medicacao_dosagem,
+                    atividade, jejum, refeicao, data_registro=None):
+    """Insere uma nova medição. Se `data_registro` for None, usa o momento atual.
+
+    Quando o paciente tomou medicação, `medicacao_nome` e `medicacao_dosagem`
+    guardam o nome e a dosagem administrada; caso contrário ficam vazios.
+    """
 
     conn = conectar()
     cursor = conn.cursor()
@@ -232,23 +321,25 @@ def inserir_medicao(usuario_id, glicemia, medicacao, medicacoes_utilizadas, ativ
         cursor.execute(
             """
             INSERT INTO glicemia(
-                usuario_id, glicemia, medicacao, medicacoes_utilizadas,
+                usuario_id, glicemia, medicacao, medicacao_nome, medicacao_dosagem,
                 atividade, jejum, refeicao
             )
-            VALUES(?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?)
             """,
-            (usuario_id, glicemia, medicacao, medicacoes_utilizadas, atividade, jejum, refeicao)
+            (usuario_id, glicemia, medicacao, medicacao_nome, medicacao_dosagem,
+             atividade, jejum, refeicao)
         )
     else:
         cursor.execute(
             """
             INSERT INTO glicemia(
-                usuario_id, glicemia, medicacao, medicacoes_utilizadas,
+                usuario_id, glicemia, medicacao, medicacao_nome, medicacao_dosagem,
                 atividade, jejum, refeicao, data_registro
             )
-            VALUES(?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?)
             """,
-            (usuario_id, glicemia, medicacao, medicacoes_utilizadas, atividade, jejum, refeicao, data_registro)
+            (usuario_id, glicemia, medicacao, medicacao_nome, medicacao_dosagem,
+             atividade, jejum, refeicao, data_registro)
         )
 
     conn.commit()
@@ -284,17 +375,21 @@ def obter_ultimas_medicoes(usuario_id, limite=5):
 # AUTENTICAÇÃO DE USUÁRIOS
 # --------------------------------------------------------------------------
 
-def criar_usuario(email, senha_hash, nome_exibicao=""):
-    """Cria um novo usuário. Retorna o id criado, ou None se email já existe."""
+def criar_usuario(email, senha_hash, nome_exibicao="", funcao="", tipo="Paciente"):
+    """Cria um novo usuário. Retorna o id criado, ou None se email já existe.
+
+    `tipo` é 'Paciente' (gerencia o próprio histórico) ou 'Profissional'
+    (enfermeiro/cuidador que administra vários pacientes).
+    """
 
     conn = conectar()
     cursor = conn.cursor()
 
     try:
         cursor.execute("""
-            INSERT INTO usuarios(nome_exibicao, email, senha_hash)
-            VALUES(?,?,?)
-        """, (nome_exibicao, email, senha_hash))
+            INSERT INTO usuarios(nome_exibicao, funcao, tipo, email, senha_hash)
+            VALUES(?,?,?,?,?)
+        """, (nome_exibicao, funcao, tipo, email, senha_hash))
 
         conn.commit()
         return cursor.lastrowid
@@ -313,7 +408,7 @@ def obter_usuario_por_email(email):
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT id, nome_exibicao, email, senha_hash
+        SELECT id, nome_exibicao, funcao, tipo, email, senha_hash
         FROM usuarios
         WHERE email = ?
     """, (email,))
@@ -327,8 +422,10 @@ def obter_usuario_por_email(email):
     return {
         "id": row[0],
         "nome_exibicao": row[1],
-        "email": row[2],
-        "senha_hash": row[3]
+        "funcao": row[2] or "",
+        "tipo": row[3] or "Paciente",
+        "email": row[4],
+        "senha_hash": row[5]
     }
 
 
@@ -363,7 +460,7 @@ def obter_usuario_por_token(token, validade_dias=7):
 
     cursor.execute(
         """
-        SELECT u.id, u.nome_exibicao, u.email
+        SELECT u.id, u.nome_exibicao, u.funcao, u.tipo, u.email
         FROM sessoes s
         JOIN usuarios u ON u.id = s.usuario_id
         WHERE s.token = ?
@@ -381,7 +478,9 @@ def obter_usuario_por_token(token, validade_dias=7):
     return {
         "id": row[0],
         "nome_exibicao": row[1],
-        "email": row[2],
+        "funcao": row[2] or "",
+        "tipo": row[3] or "Paciente",
+        "email": row[4],
     }
 
 
@@ -416,3 +515,30 @@ def atualizar_email_usuario(usuario_id, novo_email):
 
     finally:
         conn.close()
+
+
+def atualizar_funcao_usuario(usuario_id, funcao):
+    """Atualiza a função (cargo/papel) do usuário."""
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute("UPDATE usuarios SET funcao=? WHERE id=?", (funcao, usuario_id))
+
+    conn.commit()
+    conn.close()
+
+
+def atualizar_conta_usuario(usuario_id, nome_exibicao, funcao):
+    """Atualiza os dados de conta do usuário (nome de exibição e função)."""
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "UPDATE usuarios SET nome_exibicao=?, funcao=? WHERE id=?",
+        (nome_exibicao, funcao, usuario_id),
+    )
+
+    conn.commit()
+    conn.close()

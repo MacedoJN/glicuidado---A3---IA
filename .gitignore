@@ -15,6 +15,10 @@ database/glicuidado.db
 models/modelo_diabetes.pkl
 reports/
 
+# Microdados brutos da PNS (grandes; baixar do IBGE). O CSV processado
+# data/diabetes.csv É versionado.
+data/raw/
+
 # Notebooks: checkpoints
 .ipynb_checkpoints/
 

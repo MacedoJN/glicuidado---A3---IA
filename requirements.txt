@@ -1,8 +1,9 @@
-streamlit
-pandas
-numpy
-scikit-learn
-joblib
-plotly
-matplotlib
-seaborn
+# Versões fixadas para build reproduzível (Docker/EasyPanel). Python 3.11.
+streamlit==1.52.2
+pandas==2.3.3
+numpy==1.26.4
+scikit-learn==1.8.0
+joblib==1.5.3
+plotly==6.8.0
+matplotlib==3.10.7
+seaborn==0.13.2

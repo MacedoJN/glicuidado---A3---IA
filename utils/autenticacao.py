@@ -57,7 +57,9 @@ def tela_login():
                     st.session_state["usuario_logado"] = {
                         "id": usuario["id"],
                         "email": usuario["email"],
-                        "nome_exibicao": usuario["nome_exibicao"]
+                        "nome_exibicao": usuario["nome_exibicao"],
+                        "funcao": usuario.get("funcao", ""),
+                        "tipo": usuario.get("tipo", "Paciente")
                     }
                     # Cria sessão persistente e guarda o token na URL (sobrevive ao F5).
                     definir_param("sid", criar_sessao(usuario["id"]))
@@ -107,6 +109,31 @@ def tela_cadastro():
             key="cad_nome"
         )
 
+        st.markdown(
+            '<div class="gc-field-label">Tipo de conta</div>',
+            unsafe_allow_html=True
+        )
+        tipo = st.selectbox(
+            "Tipo de conta",
+            ["Paciente", "Profissional de saúde"],
+            label_visibility="collapsed",
+            key="cad_tipo",
+            help="Profissional de saúde (ex.: enfermeiro) pode cadastrar e "
+                 "acompanhar vários pacientes."
+        )
+
+        st.markdown(
+            '<div class="gc-field-label">Função '
+            '<span class="gc-optional">(opcional)</span></div>',
+            unsafe_allow_html=True
+        )
+        funcao = st.text_input(
+            "Função",
+            placeholder="Ex: Paciente, Enfermeiro(a), Cuidador(a)",
+            label_visibility="collapsed",
+            key="cad_funcao"
+        )
+
         st.markdown('<div class="gc-field-label">Email</div>', unsafe_allow_html=True)
         email = st.text_input(
             "Email",
@@ -144,10 +171,14 @@ def tela_cadastro():
             else:
                 senha_hash = gerar_hash_senha(senha)
 
+                tipo_db = "Profissional" if tipo.startswith("Profissional") else "Paciente"
+
                 novo_id = criar_usuario(
                     email.strip().lower(),
                     senha_hash,
-                    nome_exibicao.strip()
+                    nome_exibicao.strip(),
+                    funcao.strip(),
+                    tipo_db
                 )
 
                 if novo_id is None:

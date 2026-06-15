@@ -1,13 +1,15 @@
 import streamlit as st
 import pandas as pd
 import base64
+import datetime
 
 from database.db import (
     conectar,
     criar_tabela,
+    criar_usuario,
     obter_paciente,
     salvar_paciente,
-    obter_ultimo_registro,
+    listar_pacientes_do_responsavel,
     inserir_medicao,
     obter_usuario_por_token,
     remover_sessao
@@ -15,10 +17,186 @@ from database.db import (
 from models.previsao import prever_risco, carregar_metricas
 from utils.estilo import aplicar_tema
 from utils.autenticacao import exibir_autenticacao
+from utils.auth import gerar_hash_senha
 from utils.perfil import render_perfil
 from utils.sessao import obter_param, limpar_params
 
 criar_tabela()
+
+
+def calcular_idade(data_nascimento):
+    """Calcula a idade (anos completos) a partir de uma data 'dd/mm/aaaa'.
+
+    Retorna None se a data estiver vazia ou em formato inválido.
+    """
+    if not data_nascimento:
+        return None
+    try:
+        nasc = datetime.datetime.strptime(data_nascimento.strip(), "%d/%m/%Y").date()
+    except (ValueError, AttributeError):
+        return None
+
+    hoje = datetime.date.today()
+    return hoje.year - nasc.year - ((hoje.month, hoje.day) < (nasc.month, nasc.day))
+
+
+def calcular_imc(peso, altura):
+    """Calcula o IMC (kg/m²) a partir de peso (kg) e altura (m). None se inválido."""
+    if not peso or not altura or altura <= 0:
+        return None
+    return round(peso / (altura ** 2), 1)
+
+
+def calcular_data_default(paciente):
+    """Converte a data de nascimento salva ('dd/mm/aaaa') em date para o seletor.
+
+    Retorna None quando não há cadastro ou a data é inválida (campo fica vazio).
+    """
+    if paciente and paciente.get("data_nascimento"):
+        try:
+            return datetime.datetime.strptime(
+                paciente["data_nascimento"].strip(), "%d/%m/%Y"
+            ).date()
+        except (ValueError, AttributeError):
+            return None
+    return None
+
+
+def render_campos_clinicos(prefixo, paciente=None):
+    """Renderiza os campos clínicos do paciente e devolve os valores num dict.
+
+    `prefixo` mantém as chaves dos widgets únicas (permite vários formulários na
+    mesma página); `paciente` pré-preenche o formulário em edições.
+    """
+    col_foto, col_dados = st.columns([1, 3])
+
+    with col_foto:
+        if paciente and paciente.get("foto"):
+            st.image(paciente["foto"], width=150)
+        else:
+            st.markdown(
+                '<div style="width:150px;height:150px;border-radius:50%;'
+                'background:linear-gradient(135deg,#2F6FED,#5B9BFF);'
+                'display:flex;align-items:center;justify-content:center;'
+                'font-size:3rem;">👤</div>',
+                unsafe_allow_html=True
+            )
+
+        nova_foto = st.file_uploader(
+            "Foto do paciente",
+            type=["png", "jpg", "jpeg"],
+            key=f"foto_{prefixo}"
+        )
+
+    with col_dados:
+        nome = st.text_input(
+            "Nome*",
+            value=paciente["nome"] if paciente else "",
+            key=f"nome_{prefixo}"
+        )
+
+        data_nascimento_dt = st.date_input(
+            "Data de Nascimento*",
+            value=calcular_data_default(paciente),
+            min_value=datetime.date(1900, 1, 1),
+            max_value=datetime.date.today(),
+            format="DD/MM/YYYY",
+            key=f"nasc_{prefixo}"
+        )
+
+        if data_nascimento_dt:
+            idade = calcular_idade(data_nascimento_dt.strftime("%d/%m/%Y"))
+            st.caption(f"Idade: **{idade} anos** (calculada automaticamente)")
+
+    col_g1, col_g2, col_g3 = st.columns(3)
+
+    with col_g1:
+        opcoes_genero = ["Feminino", "Masculino"]
+        idx_genero = (
+            opcoes_genero.index(paciente["genero"])
+            if paciente and paciente.get("genero") in opcoes_genero
+            else 0
+        )
+        genero = st.selectbox("Gênero*", opcoes_genero, index=idx_genero, key=f"genero_{prefixo}")
+
+    with col_g2:
+        peso = st.number_input(
+            "Peso (kg)", min_value=0.0, max_value=400.0, step=0.1,
+            value=float(paciente["peso"]) if paciente and paciente.get("peso") else 0.0,
+            key=f"peso_{prefixo}"
+        )
+
+    with col_g3:
+        altura = st.number_input(
+            "Altura (m)", min_value=0.0, max_value=2.5, step=0.01,
+            value=float(paciente["altura"]) if paciente and paciente.get("altura") else 0.0,
+            key=f"altura_{prefixo}"
+        )
+
+    imc = calcular_imc(peso, altura)
+    if imc:
+        st.caption(f"IMC: **{imc} kg/m²** (calculado automaticamente)")
+
+    col_s1, col_s2 = st.columns(2)
+
+    with col_s1:
+        opcoes_status = ["Ativo", "Inativo"]
+        idx_status = (
+            opcoes_status.index(paciente["status"])
+            if paciente and paciente.get("status") in opcoes_status
+            else 0
+        )
+        status = st.selectbox("Status", opcoes_status, index=idx_status, key=f"status_{prefixo}")
+
+    with col_s2:
+        numero_sus = st.text_input(
+            "Número do Cartão SUS",
+            value=paciente["numero_sus"] if paciente else "",
+            key=f"sus_{prefixo}"
+        )
+
+    medicacoes = st.text_area(
+        "Medicamentos (separe por vírgula)",
+        value=paciente["medicacoes"] if paciente else "",
+        placeholder="Ex: Insulina, Metformina",
+        key=f"med_{prefixo}"
+    )
+
+    return {
+        "nome": nome,
+        "data_nascimento_dt": data_nascimento_dt,
+        "genero": genero,
+        "peso": peso,
+        "altura": altura,
+        "status": status,
+        "numero_sus": numero_sus,
+        "medicacoes": medicacoes,
+        "nova_foto": nova_foto,
+    }
+
+
+def persistir_paciente(id_alvo, dados, responsavel_id=None):
+    """Valida e salva os dados clínicos de um formulário. Retorna True se salvou."""
+    if not dados["nome"].strip() or dados["data_nascimento_dt"] is None:
+        st.warning("Preencha ao menos o Nome e a Data de Nascimento.")
+        return False
+
+    foto_bytes = dados["nova_foto"].read() if dados["nova_foto"] is not None else None
+
+    salvar_paciente(
+        id_alvo,
+        dados["nome"].strip(),
+        dados["data_nascimento_dt"].strftime("%d/%m/%Y"),
+        dados["numero_sus"].strip(),
+        dados["medicacoes"].strip(),
+        genero=dados["genero"],
+        peso=dados["peso"] if dados["peso"] > 0 else None,
+        altura=dados["altura"] if dados["altura"] > 0 else None,
+        status=dados["status"],
+        foto=foto_bytes,
+        responsavel_id=responsavel_id
+    )
+    return True
 
 st.set_page_config(
     page_title="Glicuidado",
@@ -47,68 +225,36 @@ if "usuario_logado" not in st.session_state:
 
 usuario = st.session_state["usuario_logado"]
 
-paciente = obter_paciente(usuario["id"])
-
 # --------------------------------------------------------------------------
-# CADASTRO INICIAL DO PACIENTE (obrigatório antes de usar o app)
+# APP (usuário autenticado)
 # --------------------------------------------------------------------------
-if paciente is None:
+# Tipo de conta: 'Profissional' (enfermeiro/cuidador) administra vários
+# pacientes; 'Paciente' gerencia apenas o próprio histórico.
+eh_profissional = usuario.get("tipo") == "Profissional"
 
-    st.title("🩺 Glicuidado")
+# Pacientes administrados pelo profissional (alimenta o seletor da sidebar).
+lista_pacientes = listar_pacientes_do_responsavel(usuario["id"]) if eh_profissional else []
 
-    st.header("Complete seu cadastro")
+# Identidade exibida no cabeçalho da sidebar (avatar/nome).
+paciente_perfil = None if eh_profissional else obter_paciente(usuario["id"])
 
-    st.info("Antes de continuar, precisamos de alguns dados sobre você.")
-
-    nome = st.text_input(
-        "Nome*",
-        value=usuario["nome_exibicao"] or ""
+if eh_profissional:
+    nome_cabecalho = usuario.get("nome_exibicao") or usuario["email"]
+else:
+    nome_cabecalho = (
+        paciente_perfil["nome"] if paciente_perfil and paciente_perfil.get("nome")
+        else (usuario.get("nome_exibicao") or usuario["email"])
     )
 
-    data_nascimento = st.text_input(
-        "Data de Nascimento* (dd/mm/aaaa)"
-    )
-
-    numero_sus = st.text_input(
-        "Número do Cartão SUS*"
-    )
-
-    medicacoes = st.text_area(
-        "Medicações utilizadas (separe por vírgula)",
-        placeholder="Ex: Insulina, Metformina"
-    )
-
-    st.caption("* Campos obrigatórios")
-
-    if st.button("Salvar e Continuar"):
-
-        if not nome.strip() or not data_nascimento.strip() or not numero_sus.strip():
-            st.warning("Preencha todos os campos obrigatórios (Nome, Data de Nascimento e Número do SUS).")
-        else:
-            salvar_paciente(
-                usuario["id"],
-                nome.strip(),
-                data_nascimento.strip(),
-                numero_sus.strip(),
-                medicacoes.strip()
-            )
-            st.success("Cadastro salvo com sucesso.")
-            st.rerun()
-
-    st.stop()
-
-# --------------------------------------------------------------------------
-# APP (usuário autenticado e com perfil completo)
-# --------------------------------------------------------------------------
 st.title("🩺 Glicuidado")
 
-primeiro_nome = paciente["nome"].split()[0] if paciente["nome"] else ""
+primeiro_nome = nome_cabecalho.split()[0] if nome_cabecalho else ""
 
 with st.sidebar:
 
     # Avatar clicável -> abre o perfil
-    if paciente.get("foto"):
-        foto_b64 = base64.b64encode(paciente["foto"]).decode("utf-8")
+    if paciente_perfil and paciente_perfil.get("foto"):
+        foto_b64 = base64.b64encode(paciente_perfil["foto"]).decode("utf-8")
         avatar_html = f'<img src="data:image/png;base64,{foto_b64}" class="gc-avatar-img" />'
     else:
         avatar_html = (
@@ -128,11 +274,52 @@ with st.sidebar:
 
     st.markdown(f'<div class="gc-welcome-text">Bem Vindo, {primeiro_nome}</div>', unsafe_allow_html=True)
 
+    # Profissional: seletor do paciente atualmente em atendimento.
+    if eh_profissional:
+        st.markdown('<div class="gc-menu-section">Paciente em atendimento</div>', unsafe_allow_html=True)
+
+        if lista_pacientes:
+            ids_pacientes = [p["usuario_id"] for p in lista_pacientes]
+            rotulos = {p["usuario_id"]: f'{p["nome"]} · {p["status"]}' for p in lista_pacientes}
+
+            atual = st.session_state.get("paciente_alvo_id")
+            indice = ids_pacientes.index(atual) if atual in ids_pacientes else 0
+
+            selecionado = st.selectbox(
+                "Paciente em atendimento",
+                ids_pacientes,
+                index=indice,
+                format_func=lambda i: rotulos.get(i, "—"),
+                label_visibility="collapsed",
+                key="sel_paciente_alvo",
+            )
+            st.session_state["paciente_alvo_id"] = selecionado
+        else:
+            st.caption("Nenhum paciente cadastrado. Use **Meus Pacientes**.")
+            st.session_state["paciente_alvo_id"] = None
+
     st.markdown('<div class="gc-menu-section">Saúde</div>', unsafe_allow_html=True)
 
-    todas_opcoes = ["Cadastrar Medição", "Predição IA", "Dashboard", "Gerar Relatório"]
+    if eh_profissional:
+        todas_opcoes = [
+            "Meus Pacientes",
+            "Cadastrar Medição",
+            "Predição IA",
+            "Dashboard",
+            "Gerar Relatório",
+        ]
+    else:
+        todas_opcoes = [
+            "Cadastro de Paciente",
+            "Cadastrar Medição",
+            "Predição IA",
+            "Dashboard",
+            "Gerar Relatório",
+        ]
 
     icones_menu = {
+        "Meus Pacientes": "👥",
+        "Cadastro de Paciente": "🧑‍⚕️",
         "Cadastrar Medição": "🩸",
         "Predição IA": "🤖",
         "Dashboard": "📊",
@@ -156,7 +343,23 @@ with st.sidebar:
         limpar_params()
         del st.session_state["usuario_logado"]
         st.session_state.pop("mostrar_perfil", None)
+        st.session_state.pop("paciente_alvo_id", None)
         st.rerun()
+
+# --------------------------------------------------------------------------
+# CONTEXTO DO PACIENTE-ALVO (quem é alvo das medições/predições/relatórios)
+# --------------------------------------------------------------------------
+if eh_profissional:
+    id_alvo = st.session_state.get("paciente_alvo_id")
+    paciente = obter_paciente(id_alvo) if id_alvo else None
+else:
+    id_alvo = usuario["id"]
+    paciente = paciente_perfil
+
+nome_paciente = (
+    paciente["nome"] if paciente and paciente.get("nome")
+    else (usuario.get("nome_exibicao") or usuario["email"])
+)
 
 # --------------------------------------------------------------------------
 # TELA DE PERFIL (sobrepõe o conteúdo principal quando aberta)
@@ -172,30 +375,180 @@ if st.session_state.get("mostrar_perfil"):
     st.stop()
 
 # --------------------------------------------------------------------------
+# MEUS PACIENTES (profissional): edita o selecionado e cadastra novos logins
+# --------------------------------------------------------------------------
+if menu == "Meus Pacientes":
+
+    st.header("👥 Meus Pacientes")
+
+    if paciente is not None:
+        st.subheader(f"Editar dados de {paciente['nome']}")
+        dados = render_campos_clinicos("edit", paciente)
+        st.caption("* Campos obrigatórios")
+
+        if st.button("Salvar Alterações"):
+            if persistir_paciente(id_alvo, dados):
+                st.success("Dados atualizados com sucesso.")
+                st.rerun()
+    else:
+        st.info("Selecione um paciente na barra lateral ou cadastre um novo abaixo.")
+
+    st.divider()
+    st.subheader("➕ Cadastrar novo paciente")
+    st.caption(
+        "Cria um **login próprio** para o paciente, vinculado a você como responsável."
+    )
+
+    # st.form envia todos os campos juntos no clique (leitura atômica), evitando
+    # que valores preenchidos pelo navegador (autofill) cheguem vazios.
+    with st.form("form_novo_paciente"):
+
+        nome_novo = st.text_input("Nome do paciente*", key="novo_nome")
+
+        col_login1, col_login2 = st.columns(2)
+        with col_login1:
+            email_novo = st.text_input("Email de acesso*", key="novo_email")
+        with col_login2:
+            senha_nova = st.text_input("Senha de acesso*", type="password", key="nova_senha")
+
+        data_nova = st.date_input(
+            "Data de Nascimento*",
+            value=None,
+            min_value=datetime.date(1900, 1, 1),
+            max_value=datetime.date.today(),
+            format="DD/MM/YYYY",
+            key="nova_data"
+        )
+
+        col_n1, col_n2, col_n3 = st.columns(3)
+        with col_n1:
+            genero_novo = st.selectbox("Gênero*", ["Feminino", "Masculino"], key="novo_genero")
+        with col_n2:
+            peso_novo = st.number_input(
+                "Peso (kg)", min_value=0.0, max_value=400.0, step=0.1, value=0.0, key="novo_peso"
+            )
+        with col_n3:
+            altura_nova = st.number_input(
+                "Altura (m)", min_value=0.0, max_value=2.5, step=0.01, value=0.0, key="nova_altura"
+            )
+
+        col_n4, col_n5 = st.columns(2)
+        with col_n4:
+            sus_novo = st.text_input("Número do Cartão SUS", key="novo_sus")
+        with col_n5:
+            medicacoes_novas = st.text_input(
+                "Medicamentos (separe por vírgula)",
+                placeholder="Ex: Insulina, Metformina", key="novas_med"
+            )
+
+        st.caption("* Campos obrigatórios")
+
+        enviado = st.form_submit_button("Cadastrar Paciente")
+
+    if enviado:
+
+        faltando = []
+        if not nome_novo.strip():
+            faltando.append("Nome")
+        if not email_novo.strip():
+            faltando.append("Email")
+        if not senha_nova:
+            faltando.append("Senha")
+        if data_nova is None:
+            faltando.append("Data de Nascimento")
+
+        if faltando:
+            st.warning("Preencha o(s) campo(s): " + ", ".join(faltando) + ".")
+        elif len(senha_nova) < 6:
+            st.error("A senha deve ter pelo menos 6 caracteres.")
+        else:
+            novo_id = criar_usuario(
+                email_novo.strip().lower(),
+                gerar_hash_senha(senha_nova),
+                nome_novo.strip(),
+                "Paciente",
+                "Paciente"
+            )
+
+            if novo_id is None:
+                st.error("Este email já está cadastrado.")
+            else:
+                salvar_paciente(
+                    novo_id,
+                    nome_novo.strip(),
+                    data_nova.strftime("%d/%m/%Y"),
+                    sus_novo.strip(),
+                    medicacoes_novas.strip(),
+                    genero=genero_novo,
+                    peso=peso_novo if peso_novo > 0 else None,
+                    altura=altura_nova if altura_nova > 0 else None,
+                    status="Ativo",
+                    responsavel_id=usuario["id"]
+                )
+                st.session_state["paciente_alvo_id"] = novo_id
+                st.success(f"Paciente {nome_novo.strip()} cadastrado e selecionado.")
+                st.rerun()
+
+    if lista_pacientes:
+        st.divider()
+        st.subheader("Pacientes cadastrados")
+        df_pacientes = pd.DataFrame(
+            [
+                {"Nome": p["nome"], "Status": p["status"], "Email de acesso": p["email"]}
+                for p in lista_pacientes
+            ]
+        )
+        st.dataframe(df_pacientes, use_container_width=True, hide_index=True)
+
+# --------------------------------------------------------------------------
+# CADASTRO DE PACIENTE (conta do tipo Paciente edita os próprios dados)
+# --------------------------------------------------------------------------
+elif menu == "Cadastro de Paciente":
+
+    st.header("Cadastro de Paciente")
+
+    if paciente is None:
+        st.info("Preencha os dados do paciente para liberar todos os recursos do app.")
+
+    dados = render_campos_clinicos("self", paciente)
+    st.caption("* Campos obrigatórios")
+
+    if st.button("Salvar Cadastro"):
+        if persistir_paciente(id_alvo, dados):
+            st.success("Cadastro salvo com sucesso.")
+            st.rerun()
+
+# --------------------------------------------------------------------------
 # CADASTRAR MEDIÇÃO
 # --------------------------------------------------------------------------
-if menu == "Cadastrar Medição":
-
-    import datetime
+elif menu == "Cadastrar Medição":
 
     st.header("Registro de Glicemia")
 
-    st.caption(f"Paciente: **{paciente['nome']}**")
+    if id_alvo is None:
+        st.warning("Selecione um paciente na barra lateral (ou cadastre em **Meus Pacientes**).")
+        st.stop()
 
+    st.caption(f"Paciente: **{nome_paciente}**")
+
+    # Limite de glicemia clinicamente plausível (igual ao da Predição IA).
     glicemia = st.number_input(
-        "Glicemia",
-        min_value=0,
-        max_value=500
+        "Glicemia (mg/dL)",
+        min_value=40,
+        max_value=400,
+        value=120
     )
 
-    medicao_agora = st.selectbox(
-        "Medição realizada agora?",
+    medicacao = st.selectbox(
+        "Tomou medicação?",
         ["Sim", "Não"]
     )
 
     data_registro = None
+    medicacao_nome = ""
+    medicacao_dosagem = ""
 
-    if medicao_agora == "Não":
+    if medicacao == "Sim":
 
         col_data, col_hora = st.columns(2)
 
@@ -203,7 +556,8 @@ if menu == "Cadastrar Medição":
             data_medicao = st.date_input(
                 "Data da medição",
                 value=datetime.date.today(),
-                max_value=datetime.date.today()
+                max_value=datetime.date.today(),
+                format="DD/MM/YYYY"
             )
 
         with col_hora:
@@ -212,30 +566,22 @@ if menu == "Cadastrar Medição":
                 value=datetime.datetime.now().time()
             )
 
-        data_registro = datetime.datetime.combine(data_medicao, hora_medicao).strftime("%Y-%m-%d %H:%M:%S")
+        data_registro = datetime.datetime.combine(
+            data_medicao, hora_medicao
+        ).strftime("%Y-%m-%d %H:%M:%S")
 
-    medicacao = st.selectbox(
-        "Tomou medicação?",
-        ["Sim", "Não"]
-    )
+        col_med, col_dose = st.columns(2)
 
-    medicacoes_utilizadas = []
-
-    if medicacao == "Sim":
-
-        opcoes_medicacao = [
-            m.strip() for m in paciente["medicacoes"].split(",") if m.strip()
-        ]
-
-        if opcoes_medicacao:
-            medicacoes_utilizadas = st.multiselect(
-                "Quais medicações foram utilizadas?",
-                opcoes_medicacao
+        with col_med:
+            medicacao_nome = st.text_input(
+                "Nome da medicação",
+                placeholder="Ex: Insulina"
             )
-        else:
-            st.info(
-                "Nenhuma medicação cadastrada no seu perfil. "
-                "Acesse 'Editar Perfil' para cadastrar suas medicações."
+
+        with col_dose:
+            medicacao_dosagem = st.text_input(
+                "Dosagem administrada",
+                placeholder="Ex: 10 UI"
             )
 
     atividade = st.selectbox(
@@ -259,10 +605,11 @@ if menu == "Cadastrar Medição":
     if st.button("Salvar"):
 
         inserir_medicao(
-            usuario["id"],
+            id_alvo,
             glicemia,
             1 if medicacao == "Sim" else 0,
-            ", ".join(medicacoes_utilizadas),
+            medicacao_nome.strip(),
+            medicacao_dosagem.strip(),
             1 if atividade == "Sim" else 0,
             1 if jejum == "Sim" else 0,
             refeicao,
@@ -277,7 +624,12 @@ if menu == "Cadastrar Medição":
 elif menu == "Predição IA":
 
     st.header("Predição de Risco de Diabetes")
-    st.caption(f"Paciente: **{paciente['nome']}**")
+
+    if id_alvo is None:
+        st.warning("Selecione um paciente na barra lateral (ou cadastre em **Meus Pacientes**).")
+        st.stop()
+
+    st.caption(f"Paciente: **{nome_paciente}**")
 
     metricas = carregar_metricas()
 
@@ -294,59 +646,71 @@ elif menu == "Predição IA":
             f"Recall: **{metricas['teste']['recall_positivo']:.2f}**"
         )
 
-        # Pré-preenche a glicemia com a última medição do paciente, se houver,
-        # limitando a uma faixa clinicamente plausível (40–400 mg/dL).
-        ultimo = obter_ultimo_registro(usuario["id"])
-        glicemia_default = int(ultimo["glicemia"]) if ultimo else 120
-        glicemia_default = max(40, min(400, glicemia_default))
+        # Dados puxados automaticamente do Cadastro de Paciente.
+        genero_paciente = paciente.get("genero") if paciente else ""
+        sexo_valor = 1 if genero_paciente == "Masculino" else 0
+        idade_auto = calcular_idade(paciente.get("data_nascimento")) if paciente else None
+        imc_auto = (
+            calcular_imc(paciente.get("peso"), paciente.get("altura"))
+            if paciente else None
+        )
 
-        st.markdown("Preencha os dados clínicos para estimar o risco de diabetes:")
+        st.markdown(
+            "Estimativa a partir do **perfil e estilo de vida** "
+            "(modelo treinado com a PNS 2019 — IBGE):"
+        )
 
         col1, col2 = st.columns(2)
 
         with col1:
-            glicemia = st.number_input(
-                "Glicemia (mg/dL)", min_value=40, max_value=400, value=glicemia_default
-            )
-            imc = st.number_input(
-                "IMC (kg/m²)", min_value=0.0, max_value=70.0, value=28.0, step=0.1
-            )
-            idade = st.number_input("Idade", min_value=1, max_value=120, value=35)
-            pressao_arterial = st.number_input(
-                "Pressão arterial diastólica (mmHg)", min_value=0, max_value=200, value=72
-            )
+            # Idade — automática a partir da data de nascimento do cadastro.
+            if idade_auto:
+                idade = idade_auto
+                st.number_input(
+                    "Idade — do cadastro", value=int(idade_auto), disabled=True
+                )
+            else:
+                idade = st.number_input("Idade", min_value=18, max_value=120, value=40)
+
+            # IMC — automático a partir do peso e altura do cadastro.
+            if imc_auto:
+                imc = imc_auto
+                st.number_input(
+                    "IMC (kg/m²) — calculado do cadastro",
+                    value=float(imc_auto), disabled=True
+                )
+            else:
+                imc = st.number_input(
+                    "IMC (kg/m²)", min_value=10.0, max_value=70.0, value=26.0, step=0.1
+                )
+                st.caption(
+                    "Informe peso e altura no **Cadastro de Paciente** para o "
+                    "IMC ser calculado automaticamente."
+                )
+
+            # Sexo — vem do gênero do cadastro.
+            st.caption(f"Sexo (do cadastro): **{genero_paciente or '—'}**")
 
         with col2:
-            gestacoes = st.number_input(
-                "Nº de gestações", min_value=0, max_value=20, value=0
+            hipertensao = st.selectbox(
+                "Tem diagnóstico de hipertensão (pressão alta)?", ["Não", "Sim"]
             )
-            insulina = st.number_input(
-                "Insulina sérica (mu U/ml)", min_value=0, max_value=900, value=0
+            atividade_fisica = st.selectbox(
+                "Pratica atividade física regularmente?", ["Não", "Sim"]
             )
-            dobra_cutanea = st.number_input(
-                "Dobra cutânea do tríceps (mm)", min_value=0, max_value=100, value=20
-            )
-            hist_familiar = st.number_input(
-                "Histórico familiar (função pedigree)",
-                min_value=0.0,
-                max_value=3.0,
-                value=0.5,
-                step=0.01,
-            )
+            tabagismo = st.selectbox("É fumante?", ["Não", "Sim"])
 
         if st.button("Analisar Risco"):
 
             try:
                 resultado = prever_risco(
                     {
-                        "gestacoes": gestacoes,
-                        "glicemia": glicemia,
-                        "pressao_arterial": pressao_arterial,
-                        "dobra_cutanea": dobra_cutanea,
-                        "insulina": insulina,
-                        "imc": imc,
-                        "hist_familiar": hist_familiar,
                         "idade": idade,
+                        "sexo": sexo_valor,
+                        "imc": imc,
+                        "hipertensao": 1 if hipertensao == "Sim" else 0,
+                        "atividade_fisica": 1 if atividade_fisica == "Sim" else 0,
+                        "tabagismo": 1 if tabagismo == "Sim" else 0,
                     }
                 )
 
@@ -395,9 +759,13 @@ elif menu == "Dashboard":
 
     st.header("📊 Dashboard")
 
-    st.caption(f"Paciente: **{paciente['nome']}**")
+    if id_alvo is None:
+        st.warning("Selecione um paciente na barra lateral (ou cadastre em **Meus Pacientes**).")
+        st.stop()
 
-    render_dashboard(usuario["id"])
+    st.caption(f"Paciente: **{nome_paciente}**")
+
+    render_dashboard(id_alvo)
 
 # --------------------------------------------------------------------------
 # GERAR RELATÓRIO
@@ -406,7 +774,11 @@ elif menu == "Gerar Relatório":
 
     st.header("Gerar Relatório")
 
-    st.caption(f"Paciente: **{paciente['nome']}**")
+    if id_alvo is None:
+        st.warning("Selecione um paciente na barra lateral (ou cadastre em **Meus Pacientes**).")
+        st.stop()
+
+    st.caption(f"Paciente: **{nome_paciente}**")
 
     st.write(
         "Baixe um arquivo CSV com todas as suas medições registradas. "
@@ -415,13 +787,16 @@ elif menu == "Gerar Relatório":
 
     conn = conectar()
 
+    # A exportação reflete os campos atuais: nome e dosagem da medicação
+    # (substituem a antiga lista de medicações), além de manter o legado.
     df = pd.read_sql(
         """
         SELECT
             data_registro AS "Data/Hora",
             glicemia AS "Glicemia (mg/dL)",
             CASE medicacao WHEN 1 THEN 'Sim' ELSE 'Não' END AS "Tomou Medicação",
-            medicacoes_utilizadas AS "Medicações Utilizadas",
+            COALESCE(NULLIF(medicacao_nome, ''), medicacoes_utilizadas, '-') AS "Medicação",
+            COALESCE(NULLIF(medicacao_dosagem, ''), '-') AS "Dosagem",
             CASE atividade WHEN 1 THEN 'Sim' ELSE 'Não' END AS "Atividade Física",
             CASE jejum WHEN 1 THEN 'Sim' ELSE 'Não' END AS "Jejum",
             COALESCE(refeicao, '-') AS "Refeição"
@@ -430,7 +805,7 @@ elif menu == "Gerar Relatório":
         ORDER BY id DESC
         """,
         conn,
-        params=(usuario["id"],)
+        params=(id_alvo,)
     )
 
     conn.close()
@@ -445,6 +820,6 @@ elif menu == "Gerar Relatório":
         st.download_button(
             label="📥 Baixar Relatório (CSV)",
             data=csv,
-            file_name=f"relatorio_glicuidado_{paciente['nome'].replace(' ', '_')}.csv",
+            file_name=f"relatorio_glicuidado_{nome_paciente.replace(' ', '_')}.csv",
             mime="text/csv"
         )

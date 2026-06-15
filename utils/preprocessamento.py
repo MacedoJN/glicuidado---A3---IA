@@ -1,30 +1,35 @@
 """
-Pré-processamento do dataset de diabetes (Pima Indians Diabetes Database).
+Pré-processamento do dataset de diabetes (Pesquisa Nacional de Saúde — PNS 2019, IBGE).
 
 Responsabilidades deste módulo:
-- Carregar o dataset real (`data/diabetes.csv`).
-- Tratar valores fisiologicamente impossíveis (zeros) como ausentes (NaN).
+- Carregar o dataset derivado dos microdados reais brasileiros (`data/diabetes.csv`,
+  gerado por `models/preparar_dados_pns.py`).
 - Disponibilizar um `Pipeline` de pré-processamento (imputação + padronização)
   reutilizado tanto no treino quanto na predição em produção, garantindo que os
   dados de entrada do usuário passem exatamente pelas mesmas transformações.
 
-Decisões de pré-processamento (justificadas no relatório/EDA):
-- Glicemia, pressão arterial, dobra cutânea, insulina e IMC iguais a 0 são
-  biologicamente impossíveis no contexto clínico -> tratados como ausentes.
-- Imputação pela MEDIANA: robusta a outliers, comuns em dados clínicos.
+Features (todas coletáveis no próprio app, sem exames laboratoriais):
+- idade (anos)
+- sexo (1 = Masculino, 0 = Feminino)
+- imc (kg/m², calculado de peso e altura)
+- hipertensao (1 = Sim, 0 = Não)
+- atividade_fisica (1 = Sim, 0 = Não)
+- tabagismo (1 = Sim, 0 = Não)
+
+Decisões de pré-processamento:
+- Imputação pela MEDIANA: robusta a eventuais ausências/outliers.
 - Padronização (StandardScaler): necessária para modelos sensíveis à escala
-  (Regressão Logística, SVM). Não prejudica modelos baseados em árvore.
+  (Regressão Logística, SVM); inofensiva para variáveis binárias e para árvores.
 """
 
 import os
 
-import numpy as np
 import pandas as pd
 
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, StandardScaler
+from sklearn.preprocessing import StandardScaler
 
 # Caminho absoluto baseado na localização deste arquivo (reprodutível em
 # qualquer máquina / diretório de execução).
@@ -33,57 +38,30 @@ CSV_PATH = os.path.join(BASE_DIR, "data", "diabetes.csv")
 
 # Ordem das features esperada pelo modelo (também usada na predição do app).
 FEATURES = [
-    "gestacoes",
-    "glicemia",
-    "pressao_arterial",
-    "dobra_cutanea",
-    "insulina",
-    "imc",
-    "hist_familiar",
     "idade",
+    "sexo",
+    "imc",
+    "hipertensao",
+    "atividade_fisica",
+    "tabagismo",
 ]
 
 ALVO = "diabetes"
 
-# Colunas em que o valor 0 é fisiologicamente impossível e indica ausência.
-COLUNAS_ZERO_INVALIDO = [
-    "glicemia",
-    "pressao_arterial",
-    "dobra_cutanea",
-    "insulina",
-    "imc",
-]
-
 
 def carregar_dados():
-    """Carrega o dataset bruto de diabetes a partir do CSV."""
+    """Carrega o dataset de diabetes (derivado da PNS 2019) a partir do CSV."""
     return pd.read_csv(CSV_PATH)
 
 
-def _zeros_para_nan(X):
-    """Substitui zeros inválidos por NaN nas colunas clínicas relevantes.
-
-    Recebe e devolve um DataFrame (mantém os nomes das colunas para o
-    restante do pipeline).
-    """
-    X = pd.DataFrame(X, columns=FEATURES).copy()
-    for coluna in COLUNAS_ZERO_INVALIDO:
-        X[coluna] = X[coluna].replace(0, np.nan)
-    return X
-
-
 def construir_preprocessador():
-    """Cria o pipeline de pré-processamento (zeros->NaN, imputação, padronização).
+    """Cria o pipeline de pré-processamento (imputação + padronização).
 
     Retornar um `Pipeline` permite encaixá-lo antes do classificador, de modo
     que treino e inferência compartilhem exatamente as mesmas etapas.
     """
     return Pipeline(
         steps=[
-            (
-                "zeros_para_nan",
-                FunctionTransformer(_zeros_para_nan, feature_names_out="one-to-one"),
-            ),
             (
                 "transformacoes",
                 ColumnTransformer(

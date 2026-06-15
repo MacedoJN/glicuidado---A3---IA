@@ -16,32 +16,42 @@ Tema 01: *Diabetes Tipo 2 — predição de risco*.
 
 ## Pipeline de IA
 
-- **Dataset:** Pima Indians Diabetes Database (768 registros, 8 features clínicas + alvo),
-  em `data/diabetes.csv`.
-- **Pré-processamento** (`utils/preprocessamento.py`): zeros fisiologicamente impossíveis
-  tratados como ausentes → imputação pela mediana → padronização (StandardScaler), tudo
-  encapsulado em um `Pipeline` reutilizado no treino e na inferência.
+- **Dataset:** **Pesquisa Nacional de Saúde (PNS) 2019 — IBGE/Ministério da Saúde**
+  ([microdados oficiais](https://ftp.ibge.gov.br/PNS/2019/Microdados/)). Dado **real
+  brasileiro**, com relevância social direta. A partir dos microdados (fixed-width,
+  ~455 MB) extraímos um dataset enxuto de **5.903 adultos** com 6 features + alvo, salvo
+  em `data/diabetes.csv` (gerado por `models/preparar_dados_pns.py`).
+- **Alvo:** diagnóstico médico de diabetes autorrelatado (variável `Q03001`). Prevalência
+  de ~9,2% (desbalanceado, como na população real).
+- **Features** (todas coletáveis no próprio app, **sem exames laboratoriais**):
+  idade, sexo, IMC (de peso/altura medidos), hipertensão, atividade física e tabagismo.
+- **Pré-processamento** (`utils/preprocessamento.py`): imputação pela mediana →
+  padronização (StandardScaler), encapsulado em um `Pipeline` reutilizado no treino e na
+  inferência (mesma transformação nos dois lados — sem *train/serve skew*).
 - **Modelagem** (`models/treino_modelo.py`): comparação de **4 algoritmos** com
-  **validação cruzada 5-fold** estratificada e seleção pelo melhor ROC-AUC.
+  **validação cruzada 5-fold** estratificada e seleção pelo melhor ROC-AUC. Como o alvo é
+  desbalanceado, usa-se `class_weight="balanced"` para priorizar o **recall** clínico.
 - **Avaliação:** accuracy, precision, recall, F1 e ROC-AUC; matriz de confusão e curva ROC.
 - **Explicabilidade:** importância das features por permutação (model-agnostic).
 - **Ética:** ver [ETICA.md](ETICA.md).
 
 ### Resultados (validação cruzada 5-fold)
 
-| Algoritmo | ROC-AUC | F1 | Acurácia | Recall |
+| Algoritmo | ROC-AUC | Recall | F1 | Acurácia |
 |---|---|---|---|---|
-| **Regressão Logística** ⭐ | **0.843** | 0.655 | 0.788 | 0.575 |
-| SVM (RBF) | 0.833 | 0.648 | 0.780 | 0.584 |
-| Gradient Boosting | 0.821 | 0.631 | 0.756 | 0.598 |
-| Random Forest | 0.820 | 0.653 | 0.774 | 0.608 |
+| **Regressão Logística** ⭐ | **0.772** | 0.702 | 0.301 | 0.701 |
+| SVM (RBF) | 0.758 | 0.778 | 0.298 | 0.663 |
+| Gradient Boosting | 0.754 | 0.019 | 0.034 | 0.905 |
+| Random Forest | 0.701 | 0.074 | 0.110 | 0.891 |
 
 ⭐ Modelo selecionado. Desempenho no **conjunto de teste** (dados nunca vistos):
-ROC-AUC **0.813**, acurácia 0.71. Figuras e métricas completas em `reports/`.
+ROC-AUC **0.755**, **recall 0.69** na classe positiva. Figuras e métricas em `reports/`.
 
-> Nota: a acurácia ~71% é **coerente** com o estado da arte para este dataset — não há
-> vazamento de alvo. (A versão anterior usava a própria glicemia para definir e prever o
-> alvo, o que inflava artificialmente os resultados.)
+> Nota: a partir de features de **estilo de vida** (sem glicemia/insulina de laboratório),
+> ROC-AUC ~0.76 é coerente. O destaque é o **recall ~0.69**: o modelo sinaliza ~7 de cada
+> 10 pessoas em risco — para uma ferramenta de **triagem**, errar para o lado do falso
+> positivo é preferível a deixar passar um caso. Modelos sem balanceamento (Gradient
+> Boosting / Random Forest) atingem acurácia ~0.90 mas recall ~0 — inúteis na prática.
 
 ## Estrutura de pastas
 
@@ -51,10 +61,13 @@ glicuidado/
 ├── requirements.txt
 ├── ETICA.md                    # Reflexão ética (vieses, fairness, mitigação)
 ├── data/
-│   └── diabetes.csv            # Dataset Pima (treino do modelo de IA)
+│   ├── diabetes.csv            # Dataset PNS 2019 já processado (treino do modelo)
+│   ├── diabetes_pima_legado.csv # Dataset Pima da versão anterior (referência)
+│   └── raw/PNS_2019.txt        # Microdados brutos do IBGE (NÃO versionado; baixar)
 ├── notebooks/
 │   └── eda_diabetes.ipynb      # Análise Exploratória de Dados (EDA)
 ├── models/
+│   ├── preparar_dados_pns.py   # Gera data/diabetes.csv a partir dos microdados da PNS
 │   ├── treino_modelo.py        # Treino + comparação de algoritmos
 │   ├── previsao.py             # Inferência (lazy loading do pipeline)
 │   └── modelo_diabetes.pkl     # Gerado pelo treino
@@ -81,22 +94,31 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-2. **Treine o modelo** (gera `models/modelo_diabetes.pkl`, `reports/metrics.json` e as figuras):
+2. (Opcional) **Regere o dataset** a partir dos microdados da PNS 2019. O CSV processado
+   (`data/diabetes.csv`) já está versionado; só é preciso refazer se quiser reproduzir do
+   zero. Baixe os [microdados do IBGE](https://ftp.ibge.gov.br/PNS/2019/Microdados/Dados/),
+   extraia o `PNS_2019.txt` em `data/raw/` e rode:
+
+```bash
+python models/preparar_dados_pns.py
+```
+
+3. **Treine o modelo** (gera `models/modelo_diabetes.pkl`, `reports/metrics.json` e as figuras):
 
 ```bash
 python models/treino_modelo.py
 ```
 
-3. (Opcional) Explore a **EDA**: abra `notebooks/eda_diabetes.ipynb` no Jupyter/VSCode.
+4. (Opcional) Explore a **EDA**: abra `notebooks/eda_diabetes.ipynb` no Jupyter/VSCode.
 
-4. Rode a aplicação:
+5. Rode a aplicação:
 
 ```bash
 streamlit run app.py
 ```
 
-A aba **"Predição IA"** usa o modelo treinado para estimar o risco de diabetes a partir
-dos dados clínicos informados.
+A aba **"Predição IA"** usa o modelo treinado para estimar o risco de diabetes a partir do
+perfil e estilo de vida (idade, sexo, IMC, hipertensão, atividade física e tabagismo).
 
 ## Deploy (Docker / EasyPanel)
 

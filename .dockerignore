@@ -16,3 +16,8 @@ reports/
 # Material de desenvolvimento desnecessário em produção
 notebooks/
 *.pptx
+
+# Microdados brutos da PNS (455 MB; só usados para regerar o CSV localmente).
+# O dataset já processado data/diabetes.csv VAI para a imagem.
+data/raw/
+data/diabetes_pima_legado.csv

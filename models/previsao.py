@@ -17,16 +17,14 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(BASE_DIR, "models", "modelo_diabetes.pkl")
 METRICS_PATH = os.path.join(BASE_DIR, "reports", "metrics.json")
 
-# Ordem das features esperada pelo pipeline.
+# Ordem das features esperada pelo pipeline (PNS 2019).
 FEATURES = [
-    "gestacoes",
-    "glicemia",
-    "pressao_arterial",
-    "dobra_cutanea",
-    "insulina",
-    "imc",
-    "hist_familiar",
     "idade",
+    "sexo",
+    "imc",
+    "hipertensao",
+    "atividade_fisica",
+    "tabagismo",
 ]
 
 _modelo = None

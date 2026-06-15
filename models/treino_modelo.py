@@ -64,12 +64,21 @@ RANDOM_STATE = 42
 
 # Algoritmos comparados. Todos encapsulados com o MESMO pré-processamento,
 # garantindo comparação justa.
+#
+# O dataset é desbalanceado (~9% de casos positivos). Sem tratamento, os modelos
+# maximizam acurácia prevendo "sem diabetes" para quase todo mundo (recall ~0),
+# o que é inútil para triagem clínica. Por isso usamos `class_weight="balanced"`
+# onde disponível, penalizando mais os erros na classe minoritária.
 MODELOS = {
-    "Regressão Logística": LogisticRegression(max_iter=1000, random_state=RANDOM_STATE),
-    "Random Forest": RandomForestClassifier(
-        n_estimators=200, random_state=RANDOM_STATE
+    "Regressão Logística": LogisticRegression(
+        max_iter=1000, class_weight="balanced", random_state=RANDOM_STATE
     ),
-    "SVM (RBF)": SVC(probability=True, random_state=RANDOM_STATE),
+    "Random Forest": RandomForestClassifier(
+        n_estimators=300, class_weight="balanced", random_state=RANDOM_STATE
+    ),
+    "SVM (RBF)": SVC(
+        probability=True, class_weight="balanced", random_state=RANDOM_STATE
+    ),
     "Gradient Boosting": GradientBoostingClassifier(random_state=RANDOM_STATE),
 }
 
