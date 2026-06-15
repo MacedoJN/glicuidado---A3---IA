@@ -1,0 +1,7 @@
+# Dependências usadas apenas em ANÁLISE/EXPLICABILIDADE (notebook de EDA e
+# script models/explicar_shap.py). NÃO entram na imagem de produção, para
+# manter o build do Docker/EasyPanel leve e estável.
+-r requirements.txt
+
+shap==0.51.0
+jupyter==1.1.1
